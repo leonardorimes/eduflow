@@ -9,10 +9,17 @@ interface Progress { theoryCompleted: boolean; theoryWatchedSeconds: number; pra
 function getEmbedUrl(url: string): string {
   if (!url) return '';
   const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
-  if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}?enablejsapi=1&rel=0&modestbranding=1`;
+  if (ytMatch) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return `https://www.youtube.com/embed/${ytMatch[1]}?enablejsapi=1&rel=0&modestbranding=1${origin ? `&origin=${encodeURIComponent(origin)}` : ''}`;
+  }
   const vmMatch = url.match(/vimeo\.com\/(\d+)/);
   if (vmMatch) return `https://player.vimeo.com/video/${vmMatch[1]}?api=1`;
   return url;
+}
+
+function isYouTubeUrl(url: string): boolean {
+  return /youtube\.com|youtu\.be/.test(url);
 }
 
 function VideoSection({ videoUrl, duration, onProgress, onComplete, completed, watchedSeconds }:
@@ -20,37 +27,101 @@ function VideoSection({ videoUrl, duration, onProgress, onComplete, completed, w
   const [localWatched, setLocalWatched] = useState(watchedSeconds);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [playing, setPlaying] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const completedRef = useRef(completed);
+  const isYT = isYouTubeUrl(videoUrl);
 
-  const pct = Math.min(100, Math.round((localWatched / duration) * 100));
-  const embedUrl = getEmbedUrl(videoUrl);
+  useEffect(() => { completedRef.current = completed; }, [completed]);
 
   useEffect(() => {
     setLocalWatched(watchedSeconds);
   }, [watchedSeconds]);
 
-  // Simulate progress by counting seconds while user sees "playing" state
-  // In production, you'd use YouTube/Vimeo APIs
-  function startTimer() {
-    if (completed) return;
+  const startTimer = useCallback(() => {
+    if (completedRef.current) return;
     if (intervalRef.current) return;
     setPlaying(true);
     intervalRef.current = setInterval(() => {
       setLocalWatched(prev => {
         const next = prev + 1;
         onProgress(next);
-        if (next >= duration && !completed) { onComplete(); clearInterval(intervalRef.current!); intervalRef.current = null; }
+        if (next >= duration && !completedRef.current) {
+          onComplete();
+          if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+        }
         return next;
       });
     }, 1000);
-  }
+  }, [duration, onComplete, onProgress]);
 
-  function stopTimer() {
+  const stopTimer = useCallback(() => {
     setPlaying(false);
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
-  }
+  }, []);
 
+  // Listen to YouTube IFrame API postMessage events
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      let data: Record<string, unknown> | null = null;
+      try {
+        data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+      } catch {
+        return;
+      }
+      if (!data) return;
+
+      // YouTube IFrame API events
+      if (data.event === 'infoDelivery' && data.info && typeof data.info === 'object') {
+        const info = data.info as any;
+        if (info.playerState !== undefined) {
+          const state = info.playerState;
+          if (state === 1) startTimer();
+          else if (state === 0) { stopTimer(); if (!completedRef.current) onComplete(); }
+          else stopTimer();
+        }
+      }
+
+      if (typeof data.event === 'string' && data.event === 'onStateChange') {
+        const state = data.info as number;
+        if (state === 1) startTimer();        // PLAYING
+        else if (state === 0) {               // ENDED
+          stopTimer();
+          if (!completedRef.current) onComplete();
+        } else {
+          stopTimer();                        // PAUSED / BUFFERING / etc
+        }
+        return;
+      }
+
+      // Vimeo player API events
+      if (data.event === 'play') { startTimer(); return; }
+      if (data.event === 'pause' || data.event === 'finish') { stopTimer(); return; }
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [isYT, startTimer, stopTimer, onComplete]);
+
+  const handleIframeLoad = () => {
+    if (iframeRef.current?.contentWindow) {
+      if (isYT) {
+        iframeRef.current.contentWindow.postMessage(
+          JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+          '*'
+        );
+      } else {
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'play' }), '*');
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'pause' }), '*');
+        iframeRef.current.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'finish' }), '*');
+      }
+    }
+  };
+
+  // Cleanup timer on unmount
   useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current); }, []);
 
+  const pct = Math.min(100, Math.round((localWatched / duration) * 100));
+  const embedUrl = getEmbedUrl(videoUrl);
   const mins = Math.floor(localWatched / 60);
   const secs = localWatched % 60;
   const totalMins = Math.floor(duration / 60);
@@ -68,14 +139,19 @@ function VideoSection({ videoUrl, duration, onProgress, onComplete, completed, w
   return (
     <div>
       <div className="video-wrapper" style={{ position: 'relative' }}>
-        <iframe src={embedUrl} title="Aula" allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" />
-        {!completed && (
-          <div style={{ position: 'absolute', bottom: '12px', right: '12px', zIndex: 20, display: 'flex', gap: '8px' }}>
-            {!playing ? (
-              <button onClick={startTimer} className="btn btn-primary btn-sm" style={{ fontSize: '12px' }}>▶ Iniciar Contagem</button>
-            ) : (
-              <button onClick={stopTimer} className="btn btn-secondary btn-sm" style={{ fontSize: '12px' }}>⏸ Pausar</button>
-            )}
+        <iframe
+          ref={iframeRef}
+          src={embedUrl}
+          title="Aula"
+          onLoad={handleIframeLoad}
+          allowFullScreen
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        />
+        {/* Live recording indicator */}
+        {!completed && playing && (
+          <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 20, display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.72)', padding: '4px 12px', borderRadius: '20px', backdropFilter: 'blur(4px)' }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444', display: 'inline-block', animation: 'pulse 1.2s ease-in-out infinite' }} />
+            <span style={{ fontSize: '11px', color: 'white', fontWeight: 600 }}>Registrando...</span>
           </div>
         )}
       </div>
@@ -84,13 +160,15 @@ function VideoSection({ videoUrl, duration, onProgress, onComplete, completed, w
           {mins}:{String(secs).padStart(2,'0')} / {totalMins}:{String(totalSecs).padStart(2,'0')}
         </div>
         <div className="watch-progress-bar"><div className="watch-progress-fill" style={{ width: `${pct}%` }} /></div>
-        <div style={{ fontSize: '12px', fontWeight: 700, color: completed ? 'var(--success)' : 'var(--accent-light)', whiteSpace: 'nowrap' }}>
-          {completed ? '✅ Completo' : `${pct}%`}
+        <div style={{ fontSize: '12px', fontWeight: 700, color: completed ? 'var(--success)' : playing ? '#f59e0b' : 'var(--accent-light)', whiteSpace: 'nowrap', transition: 'color 0.3s' }}>
+          {completed ? '✅ Completo' : playing ? `▶ ${pct}%` : `${pct}%`}
         </div>
       </div>
       {!completed && (
-        <div style={{ marginTop: '8px', padding: '10px 14px', background: 'rgba(59,130,246,0.06)', borderRadius: 'var(--radius-md)', fontSize: '12px', color: 'var(--blue-300)' }}>
-          ⏱️ Assista ao vídeo e clique em "Iniciar Contagem" para registrar seu progresso. Você precisa assistir pelo menos {totalMins}:{String(totalSecs).padStart(2,'0')} min para avançar.
+        <div style={{ marginTop: '8px', padding: '10px 14px', background: playing ? 'rgba(245,158,11,0.08)' : 'rgba(59,130,246,0.06)', borderRadius: 'var(--radius-md)', fontSize: '12px', color: playing ? '#fcd34d' : 'var(--blue-300)', transition: 'all 0.3s' }}>
+          {playing
+            ? '⏱️ Contagem em andamento — pause ou finalize o vídeo para salvar.'
+            : `▶️ Dê play no vídeo para iniciar a contagem automática. Você precisa assistir ${totalMins}m${String(totalSecs).padStart(2, '0')}s para avançar.`}
         </div>
       )}
     </div>
