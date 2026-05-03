@@ -37,17 +37,22 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 export async function requireAdmin() {
-  const user = await getCurrentUser();
-  if (!user || user.role !== 'admin') {
+  // Validate via JWT session only (role is encoded in the token)
+  // This avoids a DB lookup that may fail on stateless/serverless environments
+  const session = await getSession();
+  if (!session || session.role !== 'admin') {
     throw new Error('Unauthorized');
   }
-  return user;
+  // Also try to return the full user if available
+  const user = db.users.findById(session.userId);
+  return user ?? { id: session.userId, email: session.email, role: session.role as 'admin' | 'student', name: 'Admin', password: '', createdAt: '', enrolledCourses: [] };
 }
 
 export async function requireStudent() {
-  const user = await getCurrentUser();
-  if (!user) {
+  const session = await getSession();
+  if (!session) {
     throw new Error('Unauthorized');
   }
-  return user;
+  const user = db.users.findById(session.userId);
+  return user ?? { id: session.userId, email: session.email, role: session.role as 'admin' | 'student', name: session.email, password: '', createdAt: '', enrolledCourses: [] };
 }

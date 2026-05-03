@@ -17,8 +17,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const updated = db.courses.update(id, data);
     if (!updated) return NextResponse.json({ error: 'Não encontrado' }, { status: 404 });
     return NextResponse.json(updated);
-  } catch {
-    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+    if (msg === 'Unauthorized') return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    return NextResponse.json({ error: `Erro: ${msg}` }, { status: 500 });
   }
 }
 
@@ -29,7 +31,9 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
     const deleted = db.courses.delete(id);
     if (!deleted) return NextResponse.json({ error: 'Não encontrado' }, { status: 404 });
     return NextResponse.json({ success: true });
-  } catch {
-    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+    if (msg === 'Unauthorized') return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    return NextResponse.json({ error: `Erro: ${msg}` }, { status: 500 });
   }
 }

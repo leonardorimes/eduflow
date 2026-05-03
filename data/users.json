@@ -18,5 +18,16 @@
     "enrolledCourses": [
       "94bcc0d4-5be6-4a73-bf5f-ed789d88a993"
     ]
+  },
+  {
+    "id": "acd3fcb2-017f-43be-8d99-59800a72d1a8",
+    "name": "bruno",
+    "email": "bruno@email.com",
+    "password": "$2b$10$DoNe3HUVk6DMTcObKWCxyesTU0OfK2.q8rq3tx7fZULe2Pi7hI./m",
+    "role": "student",
+    "createdAt": "2026-05-03T18:40:35.451Z",
+    "enrolledCourses": [
+      "21d5afa1-0f9e-4ee3-8f03-c5cdddb7017d"
+    ]
   }
 ]

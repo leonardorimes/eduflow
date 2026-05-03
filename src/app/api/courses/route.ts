@@ -56,7 +56,11 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(course);
-  } catch {
-    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+    if (msg === 'Unauthorized') {
+      return NextResponse.json({ error: 'Não autorizado. Faça login novamente.' }, { status: 401 });
+    }
+    return NextResponse.json({ error: `Erro ao criar curso: ${msg}` }, { status: 500 });
   }
 }

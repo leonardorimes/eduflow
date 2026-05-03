@@ -27,7 +27,17 @@ function readJSON<T>(filename: string, defaultValue: T): T {
 function writeJSON<T>(filename: string, data: T): void {
   ensureDataDir();
   const filePath = path.join(DATA_DIR, filename);
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (e: unknown) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'EROFS' || code === 'EACCES') {
+      throw new Error(
+        'Sistema de arquivos somente leitura. Este app usa banco de dados em arquivo JSON e não é compatível com ambientes sem disco gravável (ex: Vercel Serverless). Execute localmente com "npm run dev".'
+      );
+    }
+    throw e;
+  }
 }
 
 // Types
